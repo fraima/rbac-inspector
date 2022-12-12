@@ -7,3 +7,6 @@ import (
 type k8s interface {
 	GetClusterRoleBindingsList(ctx context.Context) (ClusterRoleBuilding, error)
 }
+
+type inspector struct {
+}

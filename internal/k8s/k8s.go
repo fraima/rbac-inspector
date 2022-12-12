@@ -2,21 +2,29 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 
-	"github.com/fraima/rbac-inspector/internal/inspector"
+	"go.uber.org/zap"
 	rbac "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	v1 "k8s.io/client-go/kubernetes/typed/rbac/v1"
 	v1alpha1 "k8s.io/client-go/kubernetes/typed/rbac/v1alpha1"
 	v1beta1 "k8s.io/client-go/kubernetes/typed/rbac/v1beta1"
 	"k8s.io/client-go/rest"
+
+	"github.com/fraima/rbac-inspector/internal/inspector"
+	"github.com/google/uuid"
 )
 
 type k8s struct {
 	cliV1       v1.ClusterRoleBindingInterface
 	cliV1alpha1 v1alpha1.ClusterRoleBindingInterface
 	cliV1beta1  v1beta1.ClusterRoleBindingInterface
+
+	watchers sync.Map
 }
 
 func Connect(kubeHost, kubeTokenFile string) (*k8s, error) {
@@ -54,30 +62,80 @@ func Connect(kubeHost, kubeTokenFile string) (*k8s, error) {
 	}, nil
 }
 
-func (s *k8s) GetClusterRoleBuildingList(ctx context.Context) ([]inspector.ClusterRoleBuilding, error) {
-	list, err := s.cliV1.List(ctx, metav1.ListOptions{})
+func (s *k8s) RbacChan() (<-chan []inspector.ClusterRoleBuilding, error) {
+	watcherV1, err := s.cliV1.Watch(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("v1: %w", err)
+	}
+	watcherV1alpha1, err := s.cliV1alpha1.Watch(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("v1alpha1: %w", err)
+	}
+	watcherV1beta1, err := s.cliV1alpha1.Watch(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("v1beta1: %w", err)
 	}
 
-	resultList := make([]inspector.ClusterRoleBuilding, 0, len(list.Items))
-	for _, i := range list.Items {
-		resultList = append(resultList, convert(i))
-	}
-	return resultList, nil
+	rChan := make(chan []inspector.ClusterRoleBuilding)
+	s.watchers.Store(uuid.New().String(), stopWatcher(rChan, watcherV1.Stop, watcherV1alpha1.Stop, watcherV1beta1.Stop))
+
+	go func() {
+		var event watch.Event
+		for {
+			select {
+			case event = <-watcherV1.ResultChan():
+			case event = <-watcherV1alpha1.ResultChan():
+			case event = <-watcherV1beta1.ResultChan():
+			}
+
+			crbList, ok := event.Object.(*rbac.ClusterRoleBindingList)
+			if !ok {
+				zap.L().Warn("converting", zap.Any("event", event))
+				continue
+			}
+
+			rChan <- convert(*crbList)
+		}
+
+	}()
+
+	return rChan, nil
 }
 
-func convert(src rbac.ClusterRoleBinding) (dst inspector.ClusterRoleBuilding) {
-	for _, subject := range src.Subjects {
-		switch subject.Kind {
-		case rbac.GroupKind:
-			dst.Group = subject.Name
-		case rbac.ServiceAccountKind:
-			dst.ServiceAccount = subject.Name
-			dst.Namespace = subject.Namespace
-		case rbac.UserKind:
-			dst.User = subject.Name
+func (s *k8s) Stop() {
+	s.watchers.Range(func(_, value any) bool {
+		watcherStop := value.(func())
+		watcherStop()
+		return true
+	})
+}
+
+func convert(src rbac.ClusterRoleBindingList) []inspector.ClusterRoleBuilding {
+	resultList := make([]inspector.ClusterRoleBuilding, 0, len(src.Items))
+	for _, i := range src.Items {
+		ri := inspector.ClusterRoleBuilding{}
+		for _, subject := range i.Subjects {
+			switch subject.Kind {
+			case rbac.GroupKind:
+				ri.Group = subject.Name
+			case rbac.ServiceAccountKind:
+				ri.ServiceAccount = subject.Name
+				ri.Namespace = subject.Namespace
+			case rbac.UserKind:
+				ri.User = subject.Name
+			}
 		}
+		resultList = append(resultList, ri)
 	}
-	return
+
+	return resultList
+}
+
+func stopWatcher(rChan chan []inspector.ClusterRoleBuilding, stopWatchers ...func()) func() {
+	return func() {
+		for _, sw := range stopWatchers {
+			sw()
+		}
+		close(rChan)
+	}
 }
