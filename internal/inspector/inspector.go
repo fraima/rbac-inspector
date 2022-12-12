@@ -1,11 +1,8 @@
 package inspector
 
-import (
-	"context"
-)
-
 type k8s interface {
-	GetClusterRoleBindingsList(ctx context.Context) (ClusterRoleBuilding, error)
+	ClusterRoleChan() (<-chan []ClusterRole, error)
+	Stop()
 }
 
 type inspector struct {

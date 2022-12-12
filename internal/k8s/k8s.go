@@ -62,7 +62,7 @@ func Connect(kubeHost, kubeTokenFile string) (*k8s, error) {
 	}, nil
 }
 
-func (s *k8s) RbacChan() (<-chan []inspector.ClusterRoleBuilding, error) {
+func (s *k8s) ClusterRoleChan() (<-chan []inspector.ClusterRole, error) {
 	watcherV1, err := s.cliV1.Watch(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("v1: %w", err)
@@ -76,7 +76,7 @@ func (s *k8s) RbacChan() (<-chan []inspector.ClusterRoleBuilding, error) {
 		return nil, fmt.Errorf("v1beta1: %w", err)
 	}
 
-	rChan := make(chan []inspector.ClusterRoleBuilding)
+	rChan := make(chan []inspector.ClusterRole)
 	s.watchers.Store(uuid.New().String(), stopWatcher(rChan, watcherV1.Stop, watcherV1alpha1.Stop, watcherV1beta1.Stop))
 
 	go func() {
@@ -110,10 +110,10 @@ func (s *k8s) Stop() {
 	})
 }
 
-func convert(src rbac.ClusterRoleBindingList) []inspector.ClusterRoleBuilding {
-	resultList := make([]inspector.ClusterRoleBuilding, 0, len(src.Items))
+func convert(src rbac.ClusterRoleBindingList) []inspector.ClusterRole {
+	resultList := make([]inspector.ClusterRole, 0, len(src.Items))
 	for _, i := range src.Items {
-		ri := inspector.ClusterRoleBuilding{}
+		ri := inspector.ClusterRole{}
 		for _, subject := range i.Subjects {
 			switch subject.Kind {
 			case rbac.GroupKind:
@@ -131,7 +131,7 @@ func convert(src rbac.ClusterRoleBindingList) []inspector.ClusterRoleBuilding {
 	return resultList
 }
 
-func stopWatcher(rChan chan []inspector.ClusterRoleBuilding, stopWatchers ...func()) func() {
+func stopWatcher(rChan chan []inspector.ClusterRole, stopWatchers ...func()) func() {
 	return func() {
 		for _, sw := range stopWatchers {
 			sw()

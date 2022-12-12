@@ -1,6 +1,6 @@
 package inspector
 
-type ClusterRoleBuilding struct {
+type ClusterRole struct {
 	Group          string
 	ServiceAccount string
 	Namespace      string
