@@ -1,9 +1,10 @@
 package inspector
 
 type k8s interface {
-	ClusterRoleChan() (<-chan []ClusterRole, error)
+	ClusterRoleBuildingChan() (<-chan []ClusterRoleBuilding, error)
 	Stop()
 }
 
 type inspector struct {
+	k8s k8s
 }
