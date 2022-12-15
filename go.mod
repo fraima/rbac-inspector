@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/google/uuid v1.1.2
+	github.com/neo4j/neo4j-go-driver/v5 v5.3.0
 	go.uber.org/zap v1.24.0
 	k8s.io/api v0.26.0
 	k8s.io/apimachinery v0.26.0
